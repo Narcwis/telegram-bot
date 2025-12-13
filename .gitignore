@@ -1,0 +1,16 @@
+# Node.js
+node_modules/
+tmp/
+data/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# dotenv
+dotenv
+.env
+
+# OS files
+.DS_Store
