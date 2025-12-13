@@ -26,23 +26,21 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const TELEGRAM_API_URL = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
 const TARGET_CHAT_ID = Number(process.env.TARGET_CHAT_ID ?? "-1003322384328");
-const TMP_DIR = path.join(process.cwd(), "tmp");
-const DATA_DIR = path.join(process.cwd(), "data");
+
+// Use /data directory when running in Home Assistant addon, otherwise use local directories
+const IS_ADDON = fs.existsSync("/data/options.json");
+const BASE_DIR = IS_ADDON ? "/data" : process.cwd();
+const TMP_DIR = path.join(BASE_DIR, "tmp");
+const DATA_DIR = path.join(BASE_DIR, "data");
 const MD_DIR = path.join(DATA_DIR, "md");
 const DB_PATH = path.join(DATA_DIR, "bot.db");
 const YTDLP_BIN = process.env.YTDLP_PATH; // optional override for yt-dlp binary
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_API_KEYS = (process.env.GEMINI_API_KEY || "")
+  .split(",")
+  .map((k) => k.trim())
+  .filter(Boolean);
 const GEMINI_PROMPT =
   process.env.GEMINI_PROMPT || "Analyze this video and provide a summary.";
-
-// Initialize Gemini client once at startup
-const geminiClient = (() => {
-  if (!GEMINI_API_KEY) {
-    console.warn("Warning: GEMINI_API_KEY not set. Gemini analysis will fail.");
-    return null;
-  }
-  return new GoogleGenerativeAI(GEMINI_API_KEY);
-})();
 
 console.log(`Using Telegram API URL: ${TELEGRAM_API_URL}`);
 
@@ -72,6 +70,31 @@ const db = (() => {
         ")"
     )
     .run();
+  instance
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS api_keys (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "api_key TEXT UNIQUE NOT NULL, " +
+        "usage_count INTEGER DEFAULT 0, " +
+        "last_used DATETIME" +
+        ")"
+    )
+    .run();
+
+  // Initialize API keys in database
+  if (GEMINI_API_KEYS.length === 0) {
+    console.warn("Warning: No GEMINI_API_KEY set. Gemini analysis will fail.");
+  } else {
+    for (const key of GEMINI_API_KEYS) {
+      instance
+        .prepare(
+          "INSERT OR IGNORE INTO api_keys (api_key, usage_count, last_used) VALUES (?, 0, NULL)"
+        )
+        .run(key);
+    }
+    console.log(`Initialized ${GEMINI_API_KEYS.length} Gemini API key(s)`);
+  }
+
   return instance;
 })();
 
@@ -108,27 +131,101 @@ const downloadToTmp = async (
   return destination;
 };
 
+// Using Telegram Markdown parse mode; ensure your prompt outputs Telegram-supported Markdown.
+
+const escapeMarkdownV2 = (s: string): string => {
+  // Escape all Telegram MarkdownV2 special characters
+  return s.replace(/[\\_\*\[\]\(\)~`>#+\-=|{}\.\!]/g, (m) => `\\${m}`);
+};
+
 const sendTelegramMessage = async (
   chatId: number,
   text: string,
   replyToMessageId?: number
+): Promise<number> => {
+  const payload: any = {
+    chat_id: chatId,
+    text: escapeMarkdownV2(text),
+    parse_mode: "MarkdownV2",
+  };
+  if (replyToMessageId !== undefined) {
+    payload.reply_to_message_id = replyToMessageId;
+  }
+
+  const response = await fetch(`${TELEGRAM_API_URL}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await response.json()) as {
+    ok?: boolean;
+    result?: { message_id?: number };
+  };
+  if (!data.ok || !data.result?.message_id) {
+    console.error("Failed to send Telegram message", data);
+    throw new Error("Failed to send Telegram message");
+  }
+  return data.result.message_id as number;
+};
+
+const editTelegramMessage = async (
+  chatId: number,
+  messageId: number,
+  text: string
 ): Promise<void> => {
-  await fetch(`${TELEGRAM_API_URL}/sendMessage`, {
+  const res = await fetch(`${TELEGRAM_API_URL}/editMessageText`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text,
-      reply_to_message_id: replyToMessageId,
+      message_id: messageId,
+      text: escapeMarkdownV2(text),
+      parse_mode: "MarkdownV2",
     }),
   });
+  console.log(
+    `Edited message ${messageId} in chat ${chatId}, status: ${res.status}`
+  );
+};
+
+// Removed updateStatusMessage wrapper; use editTelegramMessage directly
+
+const isQuotaError = (err: unknown): boolean => {
+  const msg = (err as any)?.message?.toLowerCase?.() ?? "";
+  return (
+    msg.includes("quota") ||
+    msg.includes("exceed") ||
+    msg.includes("429") ||
+    msg.includes("rate")
+  );
+};
+
+const getNextApiKey = (): string | null => {
+  if (GEMINI_API_KEYS.length === 0) return null;
+
+  // Get least recently used key
+  const row = db
+    .prepare(
+      "SELECT api_key FROM api_keys ORDER BY last_used IS NULL DESC, last_used ASC, usage_count ASC LIMIT 1"
+    )
+    .get() as { api_key: string } | undefined;
+
+  if (!row) return GEMINI_API_KEYS[0];
+
+  // Update usage
+  db.prepare(
+    "UPDATE api_keys SET usage_count = usage_count + 1, last_used = datetime('now') WHERE api_key = ?"
+  ).run(row.api_key);
+
+  console.log(`Using API key: ${row.api_key.substring(0, 10)}...`);
+  return row.api_key;
 };
 
 const analyzeVideoWithGemini = async (
   videoPath: string,
   messageId: number
 ): Promise<string> => {
-  if (!geminiClient) {
+  if (GEMINI_API_KEYS.length === 0) {
     throw new Error("GEMINI_API_KEY not configured");
   }
 
@@ -136,26 +233,66 @@ const analyzeVideoWithGemini = async (
   const videoBuffer = await fs.promises.readFile(videoPath);
   const videoBase64 = videoBuffer.toString("base64");
 
-  // Get model and send request
-  const model = geminiClient.getGenerativeModel({ model: "gemini-2.5-flash" });
-  const result = await model.generateContent([
-    {
-      inlineData: {
-        data: videoBase64,
-        mimeType: "video/mp4",
-      },
-    },
-    GEMINI_PROMPT,
-  ]);
+  const modelsToTry = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash-native-audio-dialog",
+  ];
 
-  const markdownResponse = result.response.text();
+  let lastError: unknown;
+  const maxKeyRetries = GEMINI_API_KEYS.length;
 
-  // Save markdown response
-  await ensureMdDir();
-  const mdPath = path.join(MD_DIR, `${messageId}.md`);
-  await fs.promises.writeFile(mdPath, markdownResponse, "utf-8");
+  for (let keyAttempt = 0; keyAttempt < maxKeyRetries; keyAttempt++) {
+    const apiKey = getNextApiKey();
+    if (!apiKey) {
+      throw new Error("No API key available");
+    }
 
-  return markdownResponse;
+    const client = new GoogleGenerativeAI(apiKey);
+
+    for (const modelName of modelsToTry) {
+      try {
+        const model = client.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent([
+          {
+            inlineData: {
+              data: videoBase64,
+              mimeType: "video/mp4",
+            },
+          },
+          GEMINI_PROMPT,
+        ]);
+
+        const markdownResponse = result.response.text();
+
+        // Save markdown response
+        await ensureMdDir();
+        const mdPath = path.join(MD_DIR, `${messageId}.md`);
+        await fs.promises.writeFile(mdPath, markdownResponse, "utf-8");
+
+        console.log(`Successfully analyzed with model ${modelName}`);
+        return markdownResponse;
+      } catch (err) {
+        lastError = err;
+        console.error(
+          `Gemini model ${modelName} with key attempt ${keyAttempt + 1} failed`,
+          err
+        );
+        if (!isQuotaError(err)) {
+          throw err;
+        }
+        // If quota error on this model, try next model
+      }
+    }
+    // If all models failed with quota error for this key, try next key
+    console.log(
+      `All models failed for key attempt ${keyAttempt + 1}, trying next key...`
+    );
+  }
+
+  throw (
+    lastError || new Error("Gemini analysis failed: all API keys exhausted")
+  );
 };
 
 app.use(express.json());
@@ -170,14 +307,22 @@ app.post("/webhook", async (req: Request, res: Response) => {
     res.sendStatus(200);
     return;
   }
+  const chatId = message.chat!.id;
 
   const url = extractFirstUrl(message.text);
   if (!url) {
-    await sendTelegramMessage(
-      message.chat.id,
-      "No video link detected in your message.",
-      message.message_id
-    );
+    if (message.message_id !== undefined) {
+      await sendTelegramMessage(
+        chatId,
+        "No video link detected in your message.",
+        message.message_id
+      );
+    } else {
+      await sendTelegramMessage(
+        chatId,
+        "No video link detected in your message."
+      );
+    }
     res.sendStatus(200);
     return;
   }
@@ -187,20 +332,30 @@ app.post("/webhook", async (req: Request, res: Response) => {
     .get(message.message_id) as { status?: string } | undefined;
 
   if (existing?.status === "done") {
-    await sendTelegramMessage(
-      message.chat.id,
-      "Already downloaded this message.",
-      message.message_id
-    );
+    if (message.message_id !== undefined) {
+      await sendTelegramMessage(
+        chatId,
+        "Already downloaded this message.",
+        message.message_id
+      );
+    } else {
+      await sendTelegramMessage(chatId, "Already downloaded this message.");
+    }
     res.sendStatus(200);
     return;
   }
 
-  const urlObj = new URL(url);
-  const ext = path.extname(urlObj.pathname) || ".bin";
-  const filename = `${message.message_id}${ext}`;
+  // Always use .mp4 since yt-dlp merges to mp4 format
+  const filename = `${message.message_id}.mp4`;
 
   try {
+    // Send initial status message
+    const statusMessageId = await sendTelegramMessage(
+      chatId,
+      "⏳ *Downloading video...*",
+      message.message_id !== undefined ? message.message_id : undefined
+    );
+
     db.prepare(
       "INSERT OR REPLACE INTO downloads (message_id, file_path, status) VALUES (?, ?, ?)"
     ).run(message.message_id, filename, "downloading");
@@ -211,41 +366,66 @@ app.post("/webhook", async (req: Request, res: Response) => {
       "INSERT OR REPLACE INTO downloads (message_id, file_path, status) VALUES (?, ?, ?)"
     ).run(message.message_id, filename, "done");
 
-    await sendTelegramMessage(
-      message.chat.id,
-      "done downloading the video",
-      message.message_id
-    );
-
     // Analyze video with Gemini
     try {
+      // Update status: awaiting Gemini response
+      await editTelegramMessage(
+        chatId,
+        statusMessageId,
+        "⏳ *Waiting for AI analysis...*"
+      );
+
+      // Start status update interval
+      const statusInterval = setInterval(async () => {
+        const timestamp = new Date().toLocaleTimeString();
+        await editTelegramMessage(
+          chatId,
+          statusMessageId,
+          `⏳ *Waiting for AI analysis...*\n_Updated: ${timestamp}_`
+        );
+      }, 10000);
+
       const geminiResponse = await analyzeVideoWithGemini(
         savedPath,
         message.message_id
       );
-      await sendTelegramMessage(
-        message.chat.id,
-        geminiResponse,
-        message.message_id
-      );
+
+      // Clear the interval and replace with final response
+      clearInterval(statusInterval);
+      await editTelegramMessage(chatId, statusMessageId, geminiResponse);
     } catch (geminiError) {
       console.error("Gemini analysis failed", geminiError);
-      await sendTelegramMessage(
-        message.chat.id,
-        "Failed to analyze video with Gemini.",
-        message.message_id
+      await editTelegramMessage(
+        chatId,
+        statusMessageId,
+        "❌ *Failed to analyze video with AI.*"
       );
+    } finally {
+      // Delete the video file after analysis
+      try {
+        await fs.promises.unlink(savedPath);
+        console.log(`Deleted video file: ${savedPath}`);
+      } catch (deleteError) {
+        console.error(`Failed to delete video file ${savedPath}:`, deleteError);
+      }
     }
   } catch (error) {
     console.error("Download failed", error);
     db.prepare(
       "INSERT OR REPLACE INTO downloads (message_id, file_path, status) VALUES (?, ?, ?)"
     ).run(message.message_id, filename, "failed");
-    await sendTelegramMessage(
-      message.chat.id,
-      "Failed to download the video link.",
-      message.message_id
-    );
+    if (message.message_id !== undefined) {
+      await sendTelegramMessage(
+        chatId,
+        "❌ *Failed to download the video link.*",
+        message.message_id
+      );
+    } else {
+      await sendTelegramMessage(
+        chatId,
+        "❌ *Failed to download the video link.*"
+      );
+    }
   }
 
   res.sendStatus(200);
