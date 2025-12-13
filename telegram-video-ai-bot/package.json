@@ -1,0 +1,29 @@
+{
+  "name": "telegram-bot",
+  "version": "1.0.0",
+  "description": "A Telegram bot project with an Express server.",
+  "main": "src/server.ts",
+  "scripts": {
+    "start": "ts-node src/server.ts",
+    "watch": "nodemon --exec ts-node --ext ts,js src/server.ts",
+    "ngrok": "ngrok http --url=unwrecked-alivia-extemporarily.ngrok-free.dev 3000",
+    "dev": "concurrently \"npm run watch\" \"npm run ngrok\""
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "better-sqlite3": "^11.10.0",
+    "cheerio": "^1.1.2",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2",
+    "youtube-dl-exec": "^3.0.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.1",
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}
