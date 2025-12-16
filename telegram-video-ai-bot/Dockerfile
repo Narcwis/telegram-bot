@@ -1,7 +1,7 @@
 ARG BUILD_FROM
 FROM $BUILD_FROM
 
-# Install Node.js, npm, ffmpeg, Python with yt-dlp, curl, and jq
+# Install Node.js, npm, ffmpeg, Python, yt-dlp, curl, and jq from apk (avoids pip PEP668)
 RUN apk add --no-cache \
     nodejs \
     npm \
@@ -10,7 +10,7 @@ RUN apk add --no-cache \
     py3-pip \
     curl \
     jq \
-    && pip3 install --no-cache-dir yt-dlp
+    yt-dlp
 
 # Set working directory
 WORKDIR /app
