@@ -5,7 +5,17 @@ import path from "path";
 import Database from "better-sqlite3";
 import ytdlp from "youtube-dl-exec";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { convert } from "telegram-markdown-v2";
 import routes from "./routes";
+
+const mdv2 = (s: string, mode?: string) => {
+  console.log("Original message:", s);
+  if (mode === "remove") {
+    s = s.replace("```markdown", "").replace("```", ""); // prevent triple backtick issues
+  }
+  console.log("Message after removing triple backticks:", s);
+  return convert(s, "remove");
+};
 
 type TelegramChat = {
   id: number;
@@ -148,7 +158,7 @@ const sendTelegramMessage = async (
 ): Promise<number> => {
   const payload: any = {
     chat_id: chatId,
-    text: escapeMarkdownV2(text),
+    text: mdv2(text, "remove"),
     parse_mode: "MarkdownV2",
   };
   if (replyToMessageId !== undefined) {
@@ -182,7 +192,7 @@ const editTelegramMessage = async (
     body: JSON.stringify({
       chat_id: chatId,
       message_id: messageId,
-      text: escapeMarkdownV2(text),
+      text: mdv2(text, "remove"),
       parse_mode: "MarkdownV2",
     }),
   });
