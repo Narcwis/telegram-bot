@@ -26,10 +26,11 @@ Transform your Home Assistant into an intelligent Telegram video analysis bot po
 
 - 📹 Downloads videos from shared links (Instagram, YouTube, TikTok, etc.)
 - 🤖 Analyzes videos with Google Gemini AI
-- 💬 Responds directly in Telegram with formatted Markdown
+- 💬 Responds directly in Telegram with properly formatted MarkdownV2
 - 🔄 Automatic API key rotation when quota limits are reached
 - 🗄️ Tracks downloads and API usage in SQLite database
 - 🔐 Secure configuration through Home Assistant UI
+- 🌐 Built-in ngrok tunnel support for easy webhook setup
 
 [View full documentation](telegram-video-ai-bot/DOCS.md)
 

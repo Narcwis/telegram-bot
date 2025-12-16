@@ -17,7 +17,6 @@ mkdir -p /data/data
 mkdir -p /data/data/md
 
 # Start ngrok if authtoken is provided
-NGROK_PUBLIC_URL=""
 if [ -n "$NGROK_AUTHTOKEN" ]; then
   bashio::log.info "Configuring ngrok tunnel..."
   ngrok config add-authtoken "$NGROK_AUTHTOKEN"
@@ -36,21 +35,11 @@ if [ -n "$NGROK_AUTHTOKEN" ]; then
     ngrok http 3000 --log=stdout > /data/ngrok.log 2>&1 &
   fi
 
-  # Wait for ngrok to come up and read public URL
-  sleep 3
-  NGROK_PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-  if [ -n "$NGROK_PUBLIC_URL" ] && [ "$NGROK_PUBLIC_URL" != "null" ]; then
-    bashio::log.info "ngrok tunnel established: $NGROK_PUBLIC_URL"
-  else
-    bashio::log.error "Failed to obtain ngrok public URL"
-  fi
+  bashio::log.info "ngrok tunnel started"
 fi
 
-# Determine webhook URL: prefer live ngrok public URL, fallback to configured static NGROK_URL
-WEBHOOK_BASE="$NGROK_PUBLIC_URL"
-if [ -z "$WEBHOOK_BASE" ] && [ -n "$NGROK_URL" ]; then
-  WEBHOOK_BASE="$NGROK_URL"
-fi
+# Use configured NGROK_URL for webhook
+WEBHOOK_BASE="$NGROK_URL"
 
 if [ -n "$WEBHOOK_BASE" ]; then
   bashio::log.info "Setting Telegram webhook to: ${WEBHOOK_BASE}/webhook"
