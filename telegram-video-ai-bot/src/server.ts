@@ -364,7 +364,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
     // Send initial status message
     const statusMessageId = await sendTelegramMessage(
       chatId,
-      "⏳ *Downloading video...*",
+      "⏳ **Downloading video...**",
       message.message_id !== undefined ? message.message_id : undefined
     );
 
@@ -384,7 +384,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
       await editTelegramMessage(
         chatId,
         statusMessageId,
-        "⏳ *Waiting for AI analysis...*"
+        "⏳ **Waiting for AI analysis...**  "
       );
 
       // Start status update interval
@@ -393,7 +393,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
         await editTelegramMessage(
           chatId,
           statusMessageId,
-          `⏳ *Waiting for AI analysis...*\n_Updated: ${timestamp}_`
+          `⏳ **Waiting for AI analysis...**  \n__Updated: ${timestamp}__`
         );
       }, 10000);
 
@@ -410,7 +410,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
       await editTelegramMessage(
         chatId,
         statusMessageId,
-        "❌ *Failed to analyze video with AI.*"
+        "❌ **Failed to analyze video with AI.**"
       );
     } finally {
       // Delete the video file after analysis
@@ -429,13 +429,13 @@ app.post("/webhook", async (req: Request, res: Response) => {
     if (message.message_id !== undefined) {
       await sendTelegramMessage(
         chatId,
-        "❌ *Failed to download the video link.*",
+        "❌ **Failed to download the video link.**",
         message.message_id
       );
     } else {
       await sendTelegramMessage(
         chatId,
-        "❌ *Failed to download the video link.*"
+        "❌ **Failed to download the video link.**"
       );
     }
   }
