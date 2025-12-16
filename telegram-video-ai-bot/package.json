@@ -6,7 +6,7 @@
   "scripts": {
     "start": "ts-node src/server.ts",
     "watch": "nodemon --exec ts-node --ext ts,js src/server.ts",
-    "ngrok": "ngrok http --url=unwrecked-alivia-extemporarily.ngrok-free.dev 3000",
+    "ngrok": "ngrok config add-authtoken $NGROK_AUTHTOKEN && ngrok http --hostname=$NGROK_DOMAIN 3000",
     "dev": "concurrently \"npm run watch\" \"npm run ngrok\""
   },
   "dependencies": {

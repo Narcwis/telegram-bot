@@ -1,6 +1,6 @@
 {
   "name": "Telegram Video AI Bot",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "slug": "telegram-video-ai-bot",
   "description": "Telegram bot that downloads videos and analyzes them with Google Gemini AI",
   "url": "https://github.com/Narcwis/telegram-bot",
@@ -18,12 +18,14 @@
     "telegram_bot_token": "",
     "gemini_api_keys": "",
     "gemini_prompt": "Analyze this video and provide a summary.",
-    "ngrok_url": ""
+    "ngrok_url": "",
+    "ngrok_authtoken": ""
   },
   "schema": {
     "telegram_bot_token": "str",
     "gemini_api_keys": "str",
     "gemini_prompt": "str",
-    "ngrok_url": "str?"
+    "ngrok_url": "str?",
+    "ngrok_authtoken": "str?"
   }
 }

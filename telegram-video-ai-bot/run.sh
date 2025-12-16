@@ -5,6 +5,7 @@ export TELEGRAM_BOT_TOKEN=$(bashio::config 'telegram_bot_token')
 export GEMINI_API_KEY=$(bashio::config 'gemini_api_keys')
 export GEMINI_PROMPT=$(bashio::config 'gemini_prompt')
 NGROK_URL=$(bashio::config 'ngrok_url')
+NGROK_AUTHTOKEN=$(bashio::config 'ngrok_authtoken')
 
 # Log configuration (without sensitive data)
 bashio::log.info "Starting Telegram Video AI Bot..."
