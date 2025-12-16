@@ -1,6 +1,6 @@
 {
   "name": "Telegram Video AI Bot",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "slug": "telegram-video-ai-bot",
   "description": "Telegram bot that downloads videos and analyzes them with Google Gemini AI",
   "url": "https://github.com/Narcwis/telegram-bot",
