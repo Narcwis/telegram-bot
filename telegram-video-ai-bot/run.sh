@@ -16,20 +16,52 @@ mkdir -p /data/tmp
 mkdir -p /data/data
 mkdir -p /data/data/md
 
-# Set Telegram webhook if ngrok URL is provided
-if [ -n "$NGROK_URL" ]; then
-  bashio::log.info "Setting Telegram webhook to: ${NGROK_URL}/webhook"
-  
-  # Set Telegram webhook
-  WEBHOOK_RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${NGROK_URL}/webhook")
-  
+# Start ngrok if authtoken is provided
+NGROK_PUBLIC_URL=""
+if [ -n "$NGROK_AUTHTOKEN" ]; then
+  bashio::log.info "Configuring ngrok tunnel..."
+  ngrok config add-authtoken "$NGROK_AUTHTOKEN"
+
+  # Derive hostname from NGROK_URL if provided (strip protocol/path)
+  NGROK_HOSTNAME=""
+  if [ -n "$NGROK_URL" ]; then
+    NGROK_HOSTNAME=$(echo "$NGROK_URL" | sed -E 's~https?://~~' | cut -d/ -f1)
+  fi
+
+  if [ -n "$NGROK_HOSTNAME" ]; then
+    bashio::log.info "Starting ngrok with hostname: $NGROK_HOSTNAME"
+    ngrok http --hostname="$NGROK_HOSTNAME" 3000 --log=stdout > /data/ngrok.log 2>&1 &
+  else
+    bashio::log.info "Starting ngrok with random domain"
+    ngrok http 3000 --log=stdout > /data/ngrok.log 2>&1 &
+  fi
+
+  # Wait for ngrok to come up and read public URL
+  sleep 3
+  NGROK_PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+  if [ -n "$NGROK_PUBLIC_URL" ] && [ "$NGROK_PUBLIC_URL" != "null" ]; then
+    bashio::log.info "ngrok tunnel established: $NGROK_PUBLIC_URL"
+  else
+    bashio::log.error "Failed to obtain ngrok public URL"
+  fi
+fi
+
+# Determine webhook URL: prefer live ngrok public URL, fallback to configured static NGROK_URL
+WEBHOOK_BASE="$NGROK_PUBLIC_URL"
+if [ -z "$WEBHOOK_BASE" ] && [ -n "$NGROK_URL" ]; then
+  WEBHOOK_BASE="$NGROK_URL"
+fi
+
+if [ -n "$WEBHOOK_BASE" ]; then
+  bashio::log.info "Setting Telegram webhook to: ${WEBHOOK_BASE}/webhook"
+  WEBHOOK_RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${WEBHOOK_BASE}/webhook")
   if echo "$WEBHOOK_RESPONSE" | jq -e '.ok' > /dev/null; then
     bashio::log.info "Telegram webhook set successfully"
   else
     bashio::log.warning "Failed to set Telegram webhook: $WEBHOOK_RESPONSE"
   fi
 else
-  bashio::log.info "ngrok URL not configured - skipping webhook setup"
+  bashio::log.info "No ngrok URL available - skipping webhook setup"
 fi
 
 # Start the application
