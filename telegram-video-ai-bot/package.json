@@ -1,6 +1,6 @@
 {
   "name": "telegram-bot",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "description": "A Telegram bot project with an Express server.",
   "main": "src/server.ts",
   "scripts": {

@@ -83,37 +83,39 @@ export function convertToTelegramMarkdown(text: string): string {
   });
 
   // 4. Protect bold **text** (convert to *text* for MarkdownV2)
-  text = text.replace(/\*\*([^*]+)\*\*/g, (match, content) => {
+  text = text.replace(/\*\*(.+?)\*\*/g, (match, content) => {
     const escaped = escapeTextContent(content);
     return createPlaceholder(`*${escaped}*`);
   });
 
-  // 5. Protect italic *text* (convert to _text_ for MarkdownV2)
-  text = text.replace(/(?<!\*)\*(?!\*)([^*]+)\*(?!\*)/g, (match, content) => {
-    const escaped = escapeTextContent(content);
-    return createPlaceholder(`_${escaped}_`);
-  });
-
-  // 6. Protect underline __text__ (keep as __ for MarkdownV2)
-  text = text.replace(/__([^_]+)__/g, (match, content) => {
+  // 5. Protect underline __text__ (keep as __ for MarkdownV2)
+  text = text.replace(/__(.+?)__/g, (match, content) => {
     const escaped = escapeTextContent(content);
     return createPlaceholder(`__${escaped}__`);
   });
 
-  // 7. Protect italic _text_ (keep as _ for MarkdownV2)
-  text = text.replace(/(?<!_)_(?!_)([^_]+)_(?!_)/g, (match, content) => {
+  // 6. Protect single * for italic (convert to _text_ for MarkdownV2)
+  // Match * that is not part of ** (not preceded or followed by another *)
+  text = text.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, (match, content) => {
+    const escaped = escapeTextContent(content);
+    return createPlaceholder(`_${escaped}_`);
+  });
+
+  // 7. Protect single _ for italic (keep as _ for MarkdownV2)
+  // Match _ that is not part of __ (not preceded or followed by another _)
+  text = text.replace(/(?<!_)_([^_\n]+?)_(?!_)/g, (match, content) => {
     const escaped = escapeTextContent(content);
     return createPlaceholder(`_${escaped}_`);
   });
 
   // 8. Protect strikethrough ~text~
-  text = text.replace(/~([^~]+)~/g, (match, content) => {
+  text = text.replace(/~(.+?)~/g, (match, content) => {
     const escaped = escapeTextContent(content);
     return createPlaceholder(`~${escaped}~`);
   });
 
   // 9. Protect spoiler ||text||
-  text = text.replace(/\|\|([^|]+)\|\|/g, (match, content) => {
+  text = text.replace(/\|\|(.+?)\|\|/g, (match, content) => {
     const escaped = escapeTextContent(content);
     return createPlaceholder(`||${escaped}||`);
   });
@@ -129,7 +131,7 @@ export function convertToTelegramMarkdown(text: string): string {
 
   // 12. Restore all protected elements in order
   for (const { placeholder, value } of protectedItems) {
-    text = text.replace(placeholder, value);
+    text = text.replace(new RegExp(escapeRegExp(placeholder), "g"), value);
   }
 
   return text;
@@ -149,4 +151,11 @@ function escapeTextContent(text: string): string {
       return char;
     })
     .join("");
+}
+
+/**
+ * Escape RegExp special characters in a string
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
