@@ -1,7 +1,7 @@
 ARG BUILD_FROM
 FROM $BUILD_FROM
 
-# Install Node.js, npm, ffmpeg, Python, yt-dlp, curl, jq, and ngrok from apk (avoids pip PEP668)
+# Install Node.js, npm, ffmpeg, Python, yt-dlp, curl, jq, unzip, and ngrok (downloaded binary)
 RUN apk add --no-cache \
     nodejs \
     npm \
@@ -10,10 +10,12 @@ RUN apk add --no-cache \
     py3-pip \
     curl \
     jq \
+    unzip \
     yt-dlp \
-    && curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | tee /etc/apk/keys/ngrok.asc >/dev/null \
-    && echo "https://ngrok-agent.s3.amazonaws.com" >> /etc/apk/repositories \
-    && apk add --no-cache ngrok
+    && NGROK_ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/') \
+    && curl -sSL -o /tmp/ngrok.zip "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-linux-${NGROK_ARCH}.zip" \
+    && unzip /tmp/ngrok.zip -d /usr/local/bin \
+    && rm /tmp/ngrok.zip
 
 # Set working directory
 WORKDIR /app
