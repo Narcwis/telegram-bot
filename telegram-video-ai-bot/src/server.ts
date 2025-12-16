@@ -34,6 +34,9 @@ const TMP_DIR = path.join(BASE_DIR, "tmp");
 const DATA_DIR = path.join(BASE_DIR, "data");
 const MD_DIR = path.join(DATA_DIR, "md");
 const DB_PATH = path.join(DATA_DIR, "bot.db");
+
+// Serve markdown files from data/md directory
+app.use("/md", express.static(MD_DIR));
 const YTDLP_BIN = process.env.YTDLP_PATH; // optional override for yt-dlp binary
 const GEMINI_API_KEYS = (process.env.GEMINI_API_KEY || "")
   .split(",")

@@ -1,8 +1,0 @@
-build.yaml
-Dockerfile
-.dockerignore
-config.yaml
-config.json
-run.sh
-icon.png
-logo.png
