@@ -1,8 +1,7 @@
-build.yaml
-Dockerfile
-.dockerignore
-config.yaml
-config.json
-run.sh
-icon.png
-logo.png
+node_modules
+dist
+npm-debug.log
+.git
+.DS_Store
+tmp
+data
