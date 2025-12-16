@@ -1,6 +1,7 @@
 /**
  * Converts standard markdown to Telegram MarkdownV2 format
  * Based on official Telegram MarkdownV2 spec
+ * https://core.telegram.org/bots/api#markdownv2-style
  *
  * MarkdownV2 Syntax:
  * - *bold*
@@ -13,144 +14,136 @@
  * - ```language\ncode block\n```
  * - >block quote
  *
- * Escaping rules:
+ * Escaping rules (per Telegram spec):
  * - Inside pre and code: escape ` and \
  * - Inside (...) of links: escape ) and \
- * - Everywhere else: escape _ * [ ] ( ) ~ ` > # + - = | { } . !
+ * - Everywhere else: escape \ _ * [ ] ( ) ~ ` > # + - = | { } . !
  */
-
-/**
- * Characters that must be escaped in normal text (not inside code/links)
- */
-const SPECIAL_CHARS = [
-  "_",
-  "*",
-  "[",
-  "]",
-  "(",
-  ")",
-  "~",
-  "`",
-  ">",
-  "#",
-  "+",
-  "-",
-  "=",
-  "|",
-  "{",
-  "}",
-  ".",
-  "!",
-];
 
 /**
  * Convert standard markdown to Telegram MarkdownV2
  */
 export function convertToTelegramMarkdown(text: string): string {
-  const protectedItems: Array<{ placeholder: string; value: string }> = [];
-  let placeholderIndex = 0;
+  // Store protected content with unique markers that won't be escaped
+  const protectedContent = new Map<string, string>();
+  let contentId = 0;
 
-  // Helper to create unique placeholder
-  const createPlaceholder = (value: string): string => {
-    const placeholder = `___PROTECTED_${placeholderIndex++}___`;
-    protectedItems.push({ placeholder, value });
-    return placeholder;
+  // Use a marker format that won't contain special characters that need escaping
+  const getProtectionMarker = (): string =>
+    `\u0000PROTECTED_${contentId++}\u0000`;
+  const protect = (content: string): string => {
+    const marker = getProtectionMarker();
+    protectedContent.set(marker, content);
+    return marker;
   };
 
   // 1. Protect code blocks (```lang\ncode\n``` or ```code```)
-  text = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (match, lang, code) => {
-    // Escape ` and \ inside code blocks
+  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+    // Escape \ then ` inside code blocks (per spec, backslash first)
     const escaped = code.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
     const formatted = lang
       ? `\`\`\`${lang}\n${escaped}\`\`\``
       : `\`\`\`\n${escaped}\`\`\``;
-    return createPlaceholder(formatted);
+    return protect(formatted);
   });
 
   // 2. Protect inline code (`code`)
-  text = text.replace(/`([^`]+)`/g, (match, code) => {
-    // Escape ` and \ inside inline code
+  text = text.replace(/`([^`\n]+)`/g, (match, code) => {
+    // Escape \ then ` inside inline code
     const escaped = code.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
-    return createPlaceholder(`\`${escaped}\``);
+    return protect(`\`${escaped}\``);
   });
 
   // 3. Protect links [text](url)
   text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
-    // Escape ) and \ inside URL, escape special chars in link text
+    // Escape \ then ) inside URL
     const escapedUrl = url.replace(/\\/g, "\\\\").replace(/\)/g, "\\)");
-    const escapedText = escapeTextContent(linkText);
-    return createPlaceholder(`[${escapedText}](${escapedUrl})`);
+    // Escape special chars in link text
+    const escapedText = escapeSpecialChars(linkText);
+    return protect(`[${escapedText}](${escapedUrl})`);
   });
 
-  // 4. Protect bold **text** (convert to *text* for MarkdownV2)
-  text = text.replace(/\*\*(.+?)\*\*/g, (match, content) => {
-    const escaped = escapeTextContent(content);
-    return createPlaceholder(`*${escaped}*`);
+  // 4. Protect bold text **text** -> convert to *text*
+  text = text.replace(/\*\*([^\n]+?)\*\*/g, (match, content) => {
+    const escaped = escapeSpecialChars(content);
+    return protect(`*${escaped}*`);
   });
 
-  // 5. Protect underline __text__ (keep as __ for MarkdownV2)
-  text = text.replace(/__(.+?)__/g, (match, content) => {
-    const escaped = escapeTextContent(content);
-    return createPlaceholder(`__${escaped}__`);
+  // 5. Protect underline __text__ -> __text__
+  // (need to be careful: this matches __ in __text__ format, not ** format)
+  text = text.replace(/(?<!\*_)__([^\n]+?)__(?!_\*)/g, (match, content) => {
+    const escaped = escapeSpecialChars(content);
+    return protect(`__${escaped}__`);
   });
 
-  // 6. Protect single * for italic (convert to _text_ for MarkdownV2)
-  // Match * that is not part of ** (not preceded or followed by another *)
-  text = text.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, (match, content) => {
-    const escaped = escapeTextContent(content);
-    return createPlaceholder(`_${escaped}_`);
-  });
-
-  // 7. Protect single _ for italic (keep as _ for MarkdownV2)
-  // Match _ that is not part of __ (not preceded or followed by another _)
+  // 6. Protect italic _text_ (but not part of __text__)
   text = text.replace(/(?<!_)_([^_\n]+?)_(?!_)/g, (match, content) => {
-    const escaped = escapeTextContent(content);
-    return createPlaceholder(`_${escaped}_`);
+    const escaped = escapeSpecialChars(content);
+    return protect(`_${escaped}_`);
   });
 
-  // 8. Protect strikethrough ~text~
-  text = text.replace(/~(.+?)~/g, (match, content) => {
-    const escaped = escapeTextContent(content);
-    return createPlaceholder(`~${escaped}~`);
+  // 7. Protect strikethrough ~text~
+  text = text.replace(/~([^\n]+?)~/g, (match, content) => {
+    const escaped = escapeSpecialChars(content);
+    return protect(`~${escaped}~`);
   });
 
-  // 9. Protect spoiler ||text||
-  text = text.replace(/\|\|(.+?)\|\|/g, (match, content) => {
-    const escaped = escapeTextContent(content);
-    return createPlaceholder(`||${escaped}||`);
+  // 8. Protect spoiler ||text||
+  text = text.replace(/\|\|([^\n]+?)\|\|/g, (match, content) => {
+    const escaped = escapeSpecialChars(content);
+    return protect(`||${escaped}||`);
   });
 
-  // 10. Handle block quotes >text
-  text = text.replace(/^>(.+)$/gm, (match, content) => {
-    const escaped = escapeTextContent(content);
-    return createPlaceholder(`>${escaped}`);
+  // 9. Protect block quotes >text (line must start with >)
+  text = text.replace(/^>(.*)$/gm, (match, content) => {
+    const escaped = escapeSpecialChars(content.trim());
+    return protect(`>${escaped}`);
   });
 
-  // 11. Escape all remaining special characters in plain text
-  text = escapeTextContent(text);
+  // 10. Escape all remaining special characters in plain text
+  // Split by protected markers, escape unprotected parts, then rejoin
+  const parts: string[] = [];
+  const protectedRegex = /\u0000PROTECTED_\d+\u0000/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
 
-  // 12. Restore all protected elements in order
-  for (const { placeholder, value } of protectedItems) {
-    text = text.replace(new RegExp(escapeRegExp(placeholder), "g"), value);
+  while ((match = protectedRegex.exec(text)) !== null) {
+    // Escape text between last position and current protected marker
+    if (match.index > lastIndex) {
+      const unprotectedText = text.substring(lastIndex, match.index);
+      parts.push(escapeSpecialChars(unprotectedText));
+    }
+    // Keep the protected marker as-is
+    parts.push(match[0]);
+    lastIndex = protectedRegex.lastIndex;
+  }
+
+  // Don't forget the end
+  if (lastIndex < text.length) {
+    parts.push(escapeSpecialChars(text.substring(lastIndex)));
+  }
+
+  text = parts.join("");
+
+  // 11. Restore all protected content
+  for (const [marker, value] of protectedContent) {
+    text = text.replace(new RegExp(escapeRegExp(marker), "g"), value);
   }
 
   return text;
 }
 
 /**
- * Escape special characters in text content (outside of markup)
+ * Escape special characters per Telegram MarkdownV2 spec
+ * Must escape: \ _ * [ ] ( ) ~ ` > # + - = | { } . !
+ * Note: escape \ first!
  */
-function escapeTextContent(text: string): string {
-  return text
-    .split("")
-    .map((char) => {
-      // Escape special characters with backslash
-      if (SPECIAL_CHARS.includes(char) || char === "\\") {
-        return "\\" + char;
-      }
-      return char;
-    })
-    .join("");
+function escapeSpecialChars(text: string): string {
+  // Use a character class to match and escape all special chars at once
+  // Backslash must be first in the character class or it needs to be escaped
+  return text.replace(/[\\_*\[\]()~`>#+=|{}.\-!]/g, (char) => {
+    return "\\" + char;
+  });
 }
 
 /**
