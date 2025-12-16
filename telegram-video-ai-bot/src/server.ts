@@ -5,25 +5,15 @@ import path from "path";
 import Database from "better-sqlite3";
 import ytdlp from "youtube-dl-exec";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { convertToTelegramMarkdown } from "./utils/telegramMarkdown";
 import routes from "./routes";
-
-// Dynamic import to handle ESM package
-let convertMarkdown: any;
-(async () => {
-  const module = await import("telegram-markdown-v2");
-  convertMarkdown = module.convert;
-})();
 
 const mdv2 = (s: string) => {
   console.log("Original message:", s);
   // Remove markdown code block wrapper if present
   s = s.replace(/^```markdown\n/, "").replace(/\n```$/, "");
   console.log("Message after removing triple backticks:", s);
-
-  if (!convertMarkdown) {
-    throw new Error("telegram-markdown-v2 not loaded yet");
-  }
-  return convertMarkdown(s, "remove");
+  return convertToTelegramMarkdown(s);
 };
 
 type TelegramChat = {
