@@ -5,16 +5,25 @@ import path from "path";
 import Database from "better-sqlite3";
 import ytdlp from "youtube-dl-exec";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { convert } from "telegram-markdown-v2";
 import routes from "./routes";
 
-const mdv2 = (s: string, mode?: string) => {
+// Dynamic import to handle ESM package
+let convertMarkdown: any;
+(async () => {
+  const module = await import("telegram-markdown-v2");
+  convertMarkdown = module.convert;
+})();
+
+const mdv2 = (s: string) => {
   console.log("Original message:", s);
-  if (mode === "remove") {
-    s = s.replace("```markdown", "").replace("```", ""); // prevent triple backtick issues
-  }
+  // Remove markdown code block wrapper if present
+  s = s.replace(/^```markdown\n/, "").replace(/\n```$/, "");
   console.log("Message after removing triple backticks:", s);
-  return convert(s, "remove");
+
+  if (!convertMarkdown) {
+    throw new Error("telegram-markdown-v2 not loaded yet");
+  }
+  return convertMarkdown(s, "remove");
 };
 
 type TelegramChat = {
@@ -158,7 +167,7 @@ const sendTelegramMessage = async (
 ): Promise<number> => {
   const payload: any = {
     chat_id: chatId,
-    text: mdv2(text, "remove"),
+    text: mdv2(text),
     parse_mode: "MarkdownV2",
   };
   if (replyToMessageId !== undefined) {
@@ -192,7 +201,7 @@ const editTelegramMessage = async (
     body: JSON.stringify({
       chat_id: chatId,
       message_id: messageId,
-      text: mdv2(text, "remove"),
+      text: mdv2(text),
       parse_mode: "MarkdownV2",
     }),
   });
