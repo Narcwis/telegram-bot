@@ -444,13 +444,25 @@ app.post("/webhook", async (req: Request, res: Response) => {
   if (callback_query?.data) {
     // Handle inline button callbacks
     const data = callback_query.data;
-    if (data.startsWith("rerun|")) {
-      // Format: rerun|prevMessageId|newMessageId|encodedUrl
-      const parts = data.split("|");
-      if (parts.length >= 4) {
+    if (data.startsWith("rerun:")) {
+      // Format: rerun:prevMessageId:newMessageId
+      const parts = data.split(":");
+      if (parts.length >= 3) {
         const prevId = Number(parts[1]);
         const newId = Number(parts[2]);
-        const url = decodeURIComponent(parts.slice(3).join("|"));
+        // Retrieve URL from previous download entry to keep callback_data short
+        const row = db
+          .prepare("SELECT url FROM downloads WHERE message_id = ?")
+          .get(prevId) as { url?: string } | undefined;
+        const url = row?.url ?? null;
+        if (!url) {
+          await answerCallbackQuery(
+            callback_query.id,
+            "No URL found for previous analysis."
+          );
+          res.sendStatus(200);
+          return;
+        }
         const chatId = callback_query.message?.chat?.id ?? TARGET_CHAT_ID;
         const statusMsgId = callback_query.message?.message_id!;
         await answerCallbackQuery(callback_query.id, "Re-running analysis...");
@@ -562,9 +574,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
         [
           {
             text: "Re-run analysis",
-            callback_data: `rerun|${prevId}|${
-              message.message_id
-            }|${encodeURIComponent(url)}`,
+            callback_data: `rerun:${prevId}:${message.message_id}`,
           },
         ],
       ],
