@@ -1,8 +1,9 @@
 name: Telegram Video AI Bot
-version: "0.0.16"
+version: "0.0.17"
 slug: telegram-video-ai-bot
 description: Telegram bot that downloads videos and analyzes them with Google Gemini AI
 url: https://github.com/Narcwis/telegram-bot
+icon: https://raw.githubusercontent.com/Narcwis/telegram-bot/main/telegram-video-ai-bot/icon.svg
 arch:
   - aarch64
   - amd64

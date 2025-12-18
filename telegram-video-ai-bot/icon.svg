@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Background gradient -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="bookGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#f7fafc;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e2e8f0;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="brainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#48bb78;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#38a169;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="url(#bgGradient)"/>
+  
+  <!-- Knowledge book base -->
+  <g filter="url(#shadow)">
+    <!-- Book spine -->
+    <rect x="55" y="70" width="10" height="80" fill="#5a67d8" rx="2"/>
+    
+    <!-- Book pages -->
+    <rect x="65" y="65" width="75" height="85" fill="url(#bookGradient)" rx="4"/>
+    
+    <!-- Book cover details -->
+    <rect x="68" y="68" width="69" height="79" fill="none" stroke="#cbd5e0" stroke-width="1"/>
+    
+    <!-- Page lines (representing knowledge/content) -->
+    <line x1="75" y1="80" x2="125" y2="80" stroke="#a0aec0" stroke-width="2" stroke-linecap="round"/>
+    <line x1="75" y1="90" x2="130" y2="90" stroke="#a0aec0" stroke-width="2" stroke-linecap="round"/>
+    <line x1="75" y1="100" x2="120" y2="100" stroke="#a0aec0" stroke-width="2" stroke-linecap="round"/>
+    <line x1="75" y1="110" x2="128" y2="110" stroke="#a0aec0" stroke-width="2" stroke-linecap="round"/>
+    <line x1="75" y1="120" x2="115" y2="120" stroke="#a0aec0" stroke-width="2" stroke-linecap="round"/>
+    <line x1="75" y1="130" x2="125" y2="130" stroke="#a0aec0" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  
+  <!-- AI Brain/Circuit overlay (top right) -->
+  <g transform="translate(110, 50)" filter="url(#shadow)">
+    <circle cx="0" cy="0" r="25" fill="url(#brainGradient)"/>
+    
+    <!-- Neural network nodes -->
+    <circle cx="-8" cy="-5" r="3" fill="#fff"/>
+    <circle cx="8" cy="-5" r="3" fill="#fff"/>
+    <circle cx="0" cy="8" r="3" fill="#fff"/>
+    <circle cx="-8" cy="5" r="2" fill="#fff" opacity="0.8"/>
+    <circle cx="8" cy="5" r="2" fill="#fff" opacity="0.8"/>
+    
+    <!-- Neural connections -->
+    <path d="M -8,-5 L 0,8 L 8,-5 M -8,5 L 0,8 L 8,5" 
+          stroke="#fff" 
+          stroke-width="1.5" 
+          fill="none" 
+          opacity="0.6"/>
+    
+    <!-- AI symbol -->
+    <text x="0" y="4" 
+          font-family="Arial, sans-serif" 
+          font-size="10" 
+          font-weight="bold" 
+          fill="#fff" 
+          text-anchor="middle"
+          opacity="0.9">AI</text>
+  </g>
+  
+  <!-- Video play button indicator (bottom right) -->
+  <g transform="translate(125, 135)" filter="url(#shadow)">
+    <circle cx="0" cy="0" r="18" fill="#f56565"/>
+    <polygon points="-5,-6 -5,6 8,0" fill="#fff"/>
+  </g>
+  
+  <!-- Sparkle effects (knowledge/insight indicators) -->
+  <g opacity="0.8">
+    <path d="M 40,50 L 42,55 L 47,57 L 42,59 L 40,64 L 38,59 L 33,57 L 38,55 Z" fill="#fbd38d"/>
+    <path d="M 160,80 L 161,83 L 164,84 L 161,85 L 160,88 L 159,85 L 156,84 L 159,83 Z" fill="#fbd38d"/>
+    <path d="M 50,140 L 51,142 L 53,143 L 51,144 L 50,146 L 49,144 L 47,143 L 49,142 Z" fill="#90cdf4"/>
+  </g>
+</svg>
