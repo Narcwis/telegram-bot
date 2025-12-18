@@ -5,7 +5,7 @@ import path from "path";
 import Database from "better-sqlite3";
 import ytdlp from "youtube-dl-exec";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { convertToTelegramMarkdown } from "./utils/telegramMarkdown";
+import telegramifyMarkdown from "telegramify-markdown";
 import routes from "./routes";
 
 const mdv2 = (s: string) => {
@@ -13,7 +13,7 @@ const mdv2 = (s: string) => {
   // Remove markdown code block wrapper if present
   s = s.replace(/^```markdown\n/, "").replace(/\n```$/, "");
   console.log("Message after removing triple backticks:", s);
-  return convertToTelegramMarkdown(s);
+  return telegramifyMarkdown(s, "escape");
 };
 
 type TelegramChat = {
