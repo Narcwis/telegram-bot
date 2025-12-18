@@ -29,6 +29,12 @@ type TelegramMessage = {
 
 type TelegramUpdate = {
   message?: TelegramMessage;
+  callback_query?: {
+    id: string;
+    from: { id: number };
+    message?: TelegramMessage;
+    data?: string;
+  };
 };
 
 const app = express();
@@ -82,6 +88,21 @@ const db = (() => {
         ")"
     )
     .run();
+  // Add url column if missing and create unique index for url
+  try {
+    instance.prepare("ALTER TABLE downloads ADD COLUMN url TEXT").run();
+  } catch (e) {
+    // ignore if already exists
+  }
+  try {
+    instance
+      .prepare(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_downloads_url ON downloads(url)"
+      )
+      .run();
+  } catch (e) {
+    // ignore
+  }
   instance
     .prepare(
       "CREATE TABLE IF NOT EXISTS api_keys (" +
@@ -202,7 +223,8 @@ const escapeMarkdownV2 = (s: string): string => {
 const sendTelegramMessage = async (
   chatId: number,
   text: string,
-  replyToMessageId?: number
+  replyToMessageId?: number,
+  replyMarkup?: any
 ): Promise<number> => {
   const payload: any = {
     chat_id: chatId,
@@ -211,6 +233,9 @@ const sendTelegramMessage = async (
   };
   if (replyToMessageId !== undefined) {
     payload.reply_to_message_id = replyToMessageId;
+  }
+  if (replyMarkup) {
+    payload.reply_markup = replyMarkup;
   }
 
   const response = await fetch(`${TELEGRAM_API_URL}/sendMessage`, {
@@ -227,6 +252,20 @@ const sendTelegramMessage = async (
     throw new Error("Failed to send Telegram message");
   }
   return data.result.message_id as number;
+};
+const answerCallbackQuery = async (
+  callbackQueryId: string,
+  text?: string
+): Promise<void> => {
+  await fetch(`${TELEGRAM_API_URL}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      callback_query_id: callbackQueryId,
+      text,
+      show_alert: false,
+    }),
+  });
 };
 
 const editTelegramMessage = async (
@@ -401,7 +440,91 @@ app.use(express.json());
 app.use("/", routes);
 
 app.post("/webhook", async (req: Request, res: Response) => {
-  const { message } = req.body as TelegramUpdate;
+  const { message, callback_query } = req.body as TelegramUpdate;
+  if (callback_query?.data) {
+    // Handle inline button callbacks
+    const data = callback_query.data;
+    if (data.startsWith("rerun|")) {
+      // Format: rerun|prevMessageId|newMessageId|encodedUrl
+      const parts = data.split("|");
+      if (parts.length >= 4) {
+        const prevId = Number(parts[1]);
+        const newId = Number(parts[2]);
+        const url = decodeURIComponent(parts.slice(3).join("|"));
+        const chatId = callback_query.message?.chat?.id ?? TARGET_CHAT_ID;
+        const statusMsgId = callback_query.message?.message_id!;
+        await answerCallbackQuery(callback_query.id, "Re-running analysis...");
+        try {
+          await editTelegramMessage(
+            chatId,
+            statusMsgId,
+            "⏳ **Re-running analysis...**"
+          );
+
+          const filename = `${newId}.mp4`;
+          db.prepare(
+            "INSERT OR REPLACE INTO downloads (message_id, file_path, status, url) VALUES (?, ?, ?, ?)"
+          ).run(newId, filename, "downloading", url);
+
+          const savedPath = await downloadToTmp(url, filename);
+          db.prepare(
+            "INSERT OR REPLACE INTO downloads (message_id, file_path, status, url) VALUES (?, ?, ?, ?)"
+          ).run(newId, filename, "done", url);
+
+          // Fetch metadata and analyze
+          let meta: VideoTextMetadata | null = null;
+          try {
+            meta = await getVideoTextMetadata(url);
+          } catch (e) {
+            console.warn("Failed to retrieve video metadata", e);
+          }
+
+          const geminiResponse = await analyzeVideoWithGemini(
+            savedPath,
+            newId,
+            {
+              ...(meta || {}),
+              url,
+            }
+          );
+
+          // Rename new md to include both IDs, keeping old md
+          try {
+            const oldMd = path.join(MD_DIR, `${prevId}.md`);
+            const newMd = path.join(MD_DIR, `${newId}.md`);
+            const combinedMd = path.join(MD_DIR, `${prevId}-${newId}.md`);
+            // If new md exists, rename to combined; if not, skip
+            if (fs.existsSync(newMd)) {
+              await fs.promises.rename(newMd, combinedMd);
+            }
+          } catch (renameErr) {
+            console.warn("Failed to rename md to combined name", renameErr);
+          }
+
+          // Clean up video file
+          try {
+            await fs.promises.unlink(savedPath);
+          } catch (e) {}
+
+          await editTelegramMessage(chatId, statusMsgId, geminiResponse);
+        } catch (e) {
+          console.error("Re-run failed", e);
+          await editTelegramMessage(
+            chatId,
+            statusMsgId,
+            "❌ **Re-run failed. Please try again later.**"
+          );
+        }
+      } else {
+        await answerCallbackQuery(callback_query.id);
+      }
+    } else {
+      await answerCallbackQuery(callback_query.id);
+    }
+    res.sendStatus(200);
+    return;
+  }
+
   console.log("Webhook triggered:", message?.text);
 
   if (message?.chat?.id !== TARGET_CHAT_ID || !message?.message_id) {
@@ -428,20 +551,30 @@ app.post("/webhook", async (req: Request, res: Response) => {
     return;
   }
 
-  const existing = db
-    .prepare("SELECT status FROM downloads WHERE message_id = ?")
-    .get(message.message_id) as { status?: string } | undefined;
-
-  if (existing?.status === "done") {
-    if (message.message_id !== undefined) {
-      await sendTelegramMessage(
-        chatId,
-        "Already downloaded this message.",
-        message.message_id
-      );
-    } else {
-      await sendTelegramMessage(chatId, "Already downloaded this message.");
-    }
+  // Check if URL has been processed before
+  const existingByUrl = db
+    .prepare("SELECT message_id, status FROM downloads WHERE url = ?")
+    .get(url) as { message_id?: number; status?: string } | undefined;
+  if (existingByUrl?.status === "done" && existingByUrl.message_id) {
+    const prevId = existingByUrl.message_id;
+    const replyMarkup = {
+      inline_keyboard: [
+        [
+          {
+            text: "Re-run analysis",
+            callback_data: `rerun|${prevId}|${
+              message.message_id
+            }|${encodeURIComponent(url)}`,
+          },
+        ],
+      ],
+    };
+    await sendTelegramMessage(
+      chatId,
+      `This link was already processed. Press to re-run.`,
+      message.message_id,
+      replyMarkup
+    );
     res.sendStatus(200);
     return;
   }
@@ -458,14 +591,14 @@ app.post("/webhook", async (req: Request, res: Response) => {
     );
 
     db.prepare(
-      "INSERT OR REPLACE INTO downloads (message_id, file_path, status) VALUES (?, ?, ?)"
-    ).run(message.message_id, filename, "downloading");
+      "INSERT OR REPLACE INTO downloads (message_id, file_path, status, url) VALUES (?, ?, ?, ?)"
+    ).run(message.message_id, filename, "downloading", url);
 
     const savedPath = await downloadToTmp(url, filename);
 
     db.prepare(
-      "INSERT OR REPLACE INTO downloads (message_id, file_path, status) VALUES (?, ?, ?)"
-    ).run(message.message_id, filename, "done");
+      "INSERT OR REPLACE INTO downloads (message_id, file_path, status, url) VALUES (?, ?, ?, ?)"
+    ).run(message.message_id, filename, "done", url);
 
     // Analyze video with Gemini
     try {
