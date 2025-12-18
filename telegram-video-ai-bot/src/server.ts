@@ -11,7 +11,7 @@ import routes from "./routes";
 const mdv2 = (s: string) => {
   console.log("Original message:", s);
   // Remove markdown code block wrapper if present
-  s = s.replace(/^```markdown\n/, "").replace(/\n```$/, "");
+  s = s.replace(/^```markdown/, "").replace(/```/g, "");
   console.log("Message after removing triple backticks:", s);
   return telegramifyMarkdown(s, "escape");
 };
@@ -143,6 +143,55 @@ const downloadToTmp = async (
   return destination;
 };
 
+type VideoTextMetadata = {
+  title?: string | null;
+  description?: string | null;
+};
+
+const getVideoTextMetadata = async (
+  url: string
+): Promise<VideoTextMetadata> => {
+  // Try to fetch title and description using yt-dlp without downloading
+  const envPath = YTDLP_BIN
+    ? `${path.dirname(YTDLP_BIN)}${path.delimiter}${process.env.PATH ?? ""}`
+    : process.env.PATH;
+
+  let title: string | null = null;
+  let description: string | null = null;
+  try {
+    const t = (await ytdlp(
+      url,
+      {
+        getTitle: true, // --get-title
+        skipDownload: true,
+        quiet: true,
+      } as any,
+      { env: { ...process.env, PATH: envPath } }
+    )) as any;
+    // youtube-dl-exec returns stdout string for --get-title
+    title = typeof t === "string" ? t.trim() : String(t ?? "").trim();
+  } catch (e) {
+    console.warn("Failed to get title via yt-dlp", e);
+  }
+
+  try {
+    const d = (await ytdlp(
+      url,
+      {
+        getDescription: true, // --get-description
+        skipDownload: true,
+        quiet: true,
+      } as any,
+      { env: { ...process.env, PATH: envPath } }
+    )) as any;
+    description = typeof d === "string" ? d.trim() : String(d ?? "").trim();
+  } catch (e) {
+    console.warn("Failed to get description via yt-dlp", e);
+  }
+
+  return { title: title || null, description: description || null };
+};
+
 // Using Telegram Markdown parse mode; ensure your prompt outputs Telegram-supported Markdown.
 
 const escapeMarkdownV2 = (s: string): string => {
@@ -235,7 +284,8 @@ const getNextApiKey = (): string | null => {
 
 const analyzeVideoWithGemini = async (
   videoPath: string,
-  messageId: number
+  messageId: number,
+  metadata?: VideoTextMetadata & { url?: string | null }
 ): Promise<string> => {
   if (GEMINI_API_KEYS.length === 0) {
     throw new Error("GEMINI_API_KEY not configured");
@@ -245,11 +295,7 @@ const analyzeVideoWithGemini = async (
   const videoBuffer = await fs.promises.readFile(videoPath);
   const videoBase64 = videoBuffer.toString("base64");
 
-  const modelsToTry = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash-native-audio-dialog",
-  ];
+  const modelsToTry = ["gemini-2.5-flash"];
 
   let lastError: unknown;
   const maxKeyRetries = GEMINI_API_KEYS.length;
@@ -265,7 +311,30 @@ const analyzeVideoWithGemini = async (
     for (const modelName of modelsToTry) {
       try {
         const model = client.getGenerativeModel({ model: modelName });
+        const contextParts: any[] = [];
+        if (metadata) {
+          const contextLines: string[] = [];
+          if (metadata.url) contextLines.push(`Source URL: ${metadata.url}`);
+          if (metadata.title) contextLines.push(`Title: ${metadata.title}`);
+          if (metadata.description) {
+            // Truncate overly long descriptions to keep request reasonable
+            const MAX_DESC = 4000;
+            const desc =
+              metadata.description.length > MAX_DESC
+                ? metadata.description.slice(0, MAX_DESC) + "\n..."
+                : metadata.description;
+            contextLines.push(`Description:\n${desc}`);
+          }
+          if (contextLines.length) {
+            contextParts.push(
+              "Additional context from the page metadata (may be incomplete):\n" +
+                contextLines.join("\n")
+            );
+          }
+        }
+
         const result = await model.generateContent([
+          ...contextParts,
           {
             inlineData: {
               data: videoBase64,
@@ -281,6 +350,26 @@ const analyzeVideoWithGemini = async (
         await ensureMdDir();
         const mdPath = path.join(MD_DIR, `${messageId}.md`);
         await fs.promises.writeFile(mdPath, markdownResponse, "utf-8");
+
+        // Save metadata JSON next to markdown if available
+        if (
+          metadata &&
+          (metadata.url || metadata.title || metadata.description)
+        ) {
+          const metaPath = path.join(MD_DIR, `${messageId}.json`);
+          const metaOut = {
+            url: metadata.url ?? null,
+            title: metadata.title ?? null,
+            description: metadata.description ?? null,
+            analyzed_at: new Date().toISOString(),
+            model: modelName,
+          };
+          await fs.promises.writeFile(
+            metaPath,
+            JSON.stringify(metaOut, null, 2),
+            "utf-8"
+          );
+        }
 
         console.log(`Successfully analyzed with model ${modelName}`);
         return markdownResponse;
@@ -397,14 +486,41 @@ app.post("/webhook", async (req: Request, res: Response) => {
         );
       }, 10000);
 
+      // Fetch textual metadata (title/description) to provide context to Gemini
+      let meta: VideoTextMetadata | null = null;
+      try {
+        meta = await getVideoTextMetadata(url);
+      } catch (e) {
+        console.warn("Failed to retrieve video metadata", e);
+      }
+
       const geminiResponse = await analyzeVideoWithGemini(
         savedPath,
-        message.message_id
+        message.message_id,
+        {
+          ...(meta || {}),
+          url,
+        }
       );
 
       // Clear the interval and replace with final response
       clearInterval(statusInterval);
-      await editTelegramMessage(chatId, statusMessageId, geminiResponse);
+      let finalText = geminiResponse;
+      if ((meta && (meta.title || meta.description)) || url) {
+        const MAX_META_DESC = 600;
+        const rawDesc = meta?.description ?? null;
+        const descShort = rawDesc
+          ? rawDesc.length > MAX_META_DESC
+            ? rawDesc.slice(0, MAX_META_DESC) + "\n..."
+            : rawDesc
+          : null;
+        const metaLines: string[] = ["", "**Source Context**"]; // leading blank line separation
+        if (meta?.title) metaLines.push(`**Title:** ${meta.title}`);
+        if (url) metaLines.push(`**URL:** ${url}`);
+        if (descShort) metaLines.push(`**Description:**\n${descShort}`);
+        finalText += "\n\n" + metaLines.join("\n");
+      }
+      await editTelegramMessage(chatId, statusMessageId, finalText);
     } catch (geminiError) {
       console.error("Gemini analysis failed", geminiError);
       await editTelegramMessage(
