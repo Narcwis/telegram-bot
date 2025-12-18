@@ -225,7 +225,7 @@ const sendTelegramMessage = async (
   text: string,
   replyToMessageId?: number,
   replyMarkup?: any
-): Promise<number> => {
+): Promise<number | null> => {
   const payload: any = {
     chat_id: chatId,
     text: mdv2(text),
@@ -238,20 +238,26 @@ const sendTelegramMessage = async (
     payload.reply_markup = replyMarkup;
   }
 
-  const response = await fetch(`${TELEGRAM_API_URL}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const data = (await response.json()) as {
-    ok?: boolean;
-    result?: { message_id?: number };
-  };
-  if (!data.ok || !data.result?.message_id) {
-    console.error("Failed to send Telegram message", data);
-    throw new Error("Failed to send Telegram message");
+  try {
+    const response = await fetch(`${TELEGRAM_API_URL}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = (await response.json()) as {
+      ok?: boolean;
+      result?: { message_id?: number };
+      description?: string;
+    };
+    if (!data.ok || !data.result?.message_id) {
+      console.error("Failed to send Telegram message", data);
+      return null;
+    }
+    return data.result.message_id as number;
+  } catch (err) {
+    console.error("Error sending Telegram message", err);
+    return null;
   }
-  return data.result.message_id as number;
 };
 const answerCallbackQuery = async (
   callbackQueryId: string,
@@ -600,6 +606,8 @@ app.post("/webhook", async (req: Request, res: Response) => {
       message.message_id !== undefined ? message.message_id : undefined
     );
 
+    const canEditStatus = Boolean(statusMessageId);
+
     db.prepare(
       "INSERT OR REPLACE INTO downloads (message_id, file_path, status, url) VALUES (?, ?, ?, ?)"
     ).run(message.message_id, filename, "downloading", url);
@@ -613,21 +621,29 @@ app.post("/webhook", async (req: Request, res: Response) => {
     // Analyze video with Gemini
     try {
       // Update status: awaiting Gemini response
-      await editTelegramMessage(
-        chatId,
-        statusMessageId,
-        "⏳ **Waiting for AI analysis...**  "
-      );
-
-      // Start status update interval
-      const statusInterval = setInterval(async () => {
-        const timestamp = new Date().toLocaleTimeString();
+      if (canEditStatus && statusMessageId) {
         await editTelegramMessage(
           chatId,
           statusMessageId,
-          `⏳ **Waiting for AI analysis...**  \n__Updated: ${timestamp}__`
+          "⏳ **Waiting for AI analysis...**  "
         );
-      }, 10000);
+      }
+
+      // Start status update interval
+      const statusInterval = canEditStatus
+        ? setInterval(async () => {
+            const timestamp = new Date().toLocaleTimeString();
+            try {
+              await editTelegramMessage(
+                chatId,
+                statusMessageId!,
+                `⏳ **Waiting for AI analysis...**  \n__Updated: ${timestamp}__`
+              );
+            } catch (e) {
+              console.warn("Failed to edit status message", e);
+            }
+          }, 10000)
+        : null;
 
       // Fetch textual metadata (title/description) to provide context to Gemini
       let meta: VideoTextMetadata | null = null;
@@ -647,7 +663,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
       );
 
       // Clear the interval and replace with final response
-      clearInterval(statusInterval);
+      if (statusInterval) clearInterval(statusInterval);
       let finalText = geminiResponse;
       if ((meta && (meta.title || meta.description)) || url) {
         const MAX_META_DESC = 600;
@@ -663,14 +679,25 @@ app.post("/webhook", async (req: Request, res: Response) => {
         if (descShort) metaLines.push(`**Description:**\n${descShort}`);
         finalText += "\n\n" + metaLines.join("\n");
       }
-      await editTelegramMessage(chatId, statusMessageId, finalText);
+      if (canEditStatus && statusMessageId) {
+        await editTelegramMessage(chatId, statusMessageId, finalText);
+      } else {
+        await sendTelegramMessage(chatId, finalText);
+      }
     } catch (geminiError) {
       console.error("Gemini analysis failed", geminiError);
-      await editTelegramMessage(
-        chatId,
-        statusMessageId,
-        "❌ **Failed to analyze video with AI.**"
-      );
+      if (canEditStatus && statusMessageId) {
+        await editTelegramMessage(
+          chatId,
+          statusMessageId,
+          "❌ **Failed to analyze video with AI.**"
+        );
+      } else {
+        await sendTelegramMessage(
+          chatId,
+          "❌ **Failed to analyze video with AI.**"
+        );
+      }
     } finally {
       // Delete the video file after analysis
       try {
